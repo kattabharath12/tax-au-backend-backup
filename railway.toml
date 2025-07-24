@@ -2,12 +2,14 @@
 builder = "nixpacks"
 
 [deploy]
-healthcheckPath = "/"
-healthcheckTimeout = 100
+healthcheckPath = "/health"
+healthcheckTimeout = 300
 restartPolicyType = "always"
+startCommand = "npm start"
 
-[[services]]
-name = "tax-filing-backend"
+[build.env]
+NODE_ENV = "production"
 
-[services.variables]
+[deploy.env]
+NODE_ENV = "production"
 PORT = "8080"
