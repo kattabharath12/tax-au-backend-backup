@@ -99,6 +99,7 @@ const User = sequelize.define('User', {
     },
 }, {
     timestamps: true,
+    tableName: 'Users' // Ensure consistent table naming
 });
 
 module.exports = User;
