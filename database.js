@@ -18,15 +18,40 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
     }
 });
 
-// Test the connection
+// Test the connection and setup models
 const connectDB = async () => {
     try {
         await sequelize.authenticate();
         console.log('PostgreSQL connected successfully!');
 
-        // Sync all models (create tables if they don't exist)
-        await sequelize.sync({ alter: true });
-        console.log('Database synchronized!');
+        // Import models
+        const User = require('./models/User');
+        const Dependent = require('./models/Dependent');
+        
+        // Set up associations AFTER models are defined
+        User.hasMany(Dependent, { 
+            foreignKey: 'userId', 
+            as: 'dependents',
+            onDelete: 'CASCADE'
+        });
+        Dependent.belongsTo(User, { 
+            foreignKey: 'userId', 
+            as: 'user'
+        });
+
+        // Sync models in the correct order
+        console.log('Syncing database models...');
+        
+        // Sync User first
+        await User.sync({ alter: true });
+        console.log('User model synced');
+        
+        // Then sync Dependent (which has foreign key to User)
+        await Dependent.sync({ alter: true });
+        console.log('Dependent model synced');
+        
+        console.log('Database synchronized successfully!');
+        
     } catch (error) {
         console.error('Unable to connect to PostgreSQL:', error);
         process.exit(1);
