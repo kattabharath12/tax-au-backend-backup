@@ -3,10 +3,11 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { body, validationResult } = require('express-validator');
-const User = require('../models/User');
-const Dependent = require('../models/Dependent');
 const auth = require('../middleware/auth');
 const PDFDocument = require('pdfkit');
+
+// Import models from database module to ensure consistency
+const { User, Dependent } = require('../database');
 
 const router = express.Router();
 
@@ -83,7 +84,12 @@ const uploadW2 = multer({
 router.get('/me', auth, async (req, res) => {
     try {
         const user = await User.findByPk(req.user.userId, {
-            attributes: { exclude: ['password'] }
+            attributes: { exclude: ['password'] },
+            include: [{
+                model: Dependent,
+                as: 'userDependents', // Use the correct alias
+                attributes: ['id', 'name', 'relationship', 'dob', 'ssn']
+            }]
         });
 
         if (!user) {
@@ -100,7 +106,7 @@ router.get('/me', auth, async (req, res) => {
             firstName: user.firstName,
             lastName: user.lastName,
             filingStatus: user.filingStatus,
-            dependents: user.dependents,
+            dependents: user.userDependents || [], // Use correct alias
             w9Uploaded: user.w9Uploaded,
             w9UploadDate: user.w9UploadDate,
             w9FileName: user.w9FileName,
@@ -379,7 +385,6 @@ router.post('/extract-w2', auth, async (req, res) => {
 
         // --- MOCKED DATA EXTRACTION ---
         // This simulates extracting data from the W-2 form
-        // In a real implementation, you would use OCR or PDF parsing libraries
         const extractedData = {
             // Employee Information
             employeeName: user.firstName + ' ' + user.lastName || 'John Doe',
@@ -402,22 +407,22 @@ router.post('/extract-w2', auth, async (req, res) => {
             },
 
             // W-2 Box Data (simulated)
-            box1_wages: 65000.00,           // Wages, tips, other compensation
-            box2_federalTax: 8500.00,       // Federal income tax withheld
-            box3_socialSecurityWages: 65000.00, // Social security wages
-            box4_socialSecurityTax: 4030.00,    // Social security tax withheld
-            box5_medicareWages: 65000.00,       // Medicare wages and tips
-            box6_medicareTax: 942.50,           // Medicare tax withheld
-            box7_socialSecurityTips: 0.00,      // Social security tips
-            box8_allocatedTips: 0.00,           // Allocated tips
-            box9_verificationCode: '',          // Verification code
-            box10_dependentCareBenefits: 0.00,  // Dependent care benefits
-            box11_nonqualifiedPlans: 0.00,      // Nonqualified plans
-            box12_codes: [],                    // Box 12 codes and amounts
-            box13_statutoryEmployee: false,     // Statutory employee
-            box13_retirementPlan: true,         // Retirement plan
-            box13_thirdPartySickPay: false,     // Third-party sick pay
-            box14_other: [],                    // Other deductions/income
+            box1_wages: 65000.00,
+            box2_federalTax: 8500.00,
+            box3_socialSecurityWages: 65000.00,
+            box4_socialSecurityTax: 4030.00,
+            box5_medicareWages: 65000.00,
+            box6_medicareTax: 942.50,
+            box7_socialSecurityTips: 0.00,
+            box8_allocatedTips: 0.00,
+            box9_verificationCode: '',
+            box10_dependentCareBenefits: 0.00,
+            box11_nonqualifiedPlans: 0.00,
+            box12_codes: [],
+            box13_statutoryEmployee: false,
+            box13_retirementPlan: true,
+            box13_thirdPartySickPay: false,
+            box14_other: [],
 
             // Additional calculated fields
             taxableIncome: 65000.00,
@@ -426,11 +431,11 @@ router.post('/extract-w2', auth, async (req, res) => {
 
             // Extraction metadata
             extractionDate: new Date(),
-            extractionMethod: 'mocked', // In real implementation: 'ocr', 'pdf-parse', etc.
-            confidence: 0.95 // Confidence score for real extraction
+            extractionMethod: 'mocked',
+            confidence: 0.95
         };
 
-        // Store extracted data in user record (optional)
+        // Store extracted data in user record
         await user.update({
             income: {
                 ...user.income,
@@ -496,7 +501,6 @@ router.put('/w2-data', auth, [
     body('box1_wages').optional().isNumeric(),
     body('box2_federalTax').optional().isNumeric(),
     body('employerName').optional().trim(),
-    // Add more validation as needed
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -553,7 +557,7 @@ router.put('/w2-data', auth, [
     }
 });
 
-// Generate 1098 data (POST /api/dashboard/generate-1098) - NEW
+// Generate 1098 data (POST /api/dashboard/generate-1098)
 router.post('/generate-1098', auth, async (req, res) => {
     try {
         const user = await User.findByPk(req.user.userId);
@@ -567,13 +571,11 @@ router.post('/generate-1098', auth, async (req, res) => {
         // Get W-2 data for calculations
         const w2Data = user.income.w2Data;
 
-        // Calculate mortgage interest based on income (this is a simplified example)
-        // In reality, this would come from actual mortgage documents or user input
-        const estimatedMortgageInterest = Math.min(w2Data.box1_wages * 0.04, 10000); // 4% of wages, max $10k
+        // Calculate mortgage interest based on income
+        const estimatedMortgageInterest = Math.min(w2Data.box1_wages * 0.04, 10000);
 
-        // Generate 1098 data using W-2 information and user profile
+        // Generate 1098 data
         const form1098 = {
-            // Borrower Information (from user profile and W-2)
             borrowerName: w2Data.employeeName || (user.firstName + ' ' + user.lastName),
             borrowerSSN: w2Data.employeeSSN || user.ssn || '123-45-6789',
             borrowerAddress: w2Data.employeeAddress || user.address || {
@@ -583,7 +585,6 @@ router.post('/generate-1098', auth, async (req, res) => {
                 zip: '12345'
             },
 
-            // Lender Information (mocked)
             lenderName: 'First National Mortgage Bank',
             lenderTIN: '98-7654321',
             lenderAddress: {
@@ -593,14 +594,12 @@ router.post('/generate-1098', auth, async (req, res) => {
                 zip: '10001'
             },
 
-            // 1098 Form Data
-            mortgageInterestReceived: estimatedMortgageInterest, // Box 1
-            pointsPaid: 0.00, // Box 2
-            refundOfOverpaidInterest: 0.00, // Box 3
-            mortgageInsurancePremiums: w2Data.box1_wages * 0.005, // Box 4 - 0.5% of wages
-            outstandingMortgagePrincipal: w2Data.box1_wages * 3.5, // Box 5 - estimated based on income
+            mortgageInterestReceived: estimatedMortgageInterest,
+            pointsPaid: 0.00,
+            refundOfOverpaidInterest: 0.00,
+            mortgageInsurancePremiums: w2Data.box1_wages * 0.005,
+            outstandingMortgagePrincipal: w2Data.box1_wages * 3.5,
 
-            // Property Information
             propertyAddress: w2Data.employeeAddress || user.address || {
                 street: '123 Main St',
                 city: 'Anytown',
@@ -608,15 +607,13 @@ router.post('/generate-1098', auth, async (req, res) => {
                 zip: '12345'
             },
 
-            // Form Metadata
             formYear: new Date().getFullYear(),
             generatedDate: new Date(),
             accountNumber: 'MTG-' + user.id.substring(0, 8).toUpperCase(),
 
-            // Calculation Details (for reference)
             calculationBasis: {
                 basedOnW2Income: w2Data.box1_wages,
-                interestRate: 0.04, // 4% assumed rate
+                interestRate: 0.04,
                 estimationMethod: 'income_based'
             }
         };
@@ -647,11 +644,18 @@ router.post('/generate-1098', auth, async (req, res) => {
     }
 });
 
-// Get 1098 data (GET /api/dashboard/1098-data) - UPDATED
+// Get 1098 data (GET /api/dashboard/1098-data)
 router.get('/1098-data', auth, async (req, res) => {
     try {
-        const form1098 = await Form1098.findOne({ where: { userId: req.user.id } });
-        
+        const user = await User.findByPk(req.user.userId);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const form1098 = user.deductions?.form1098;
         if (!form1098) {
             return res.status(404).json({
                 success: false,
@@ -662,7 +666,7 @@ router.get('/1098-data', auth, async (req, res) => {
         res.json({
             success: true,
             data: form1098,
-            lastGeneration: form1098.generatedDate
+            lastGeneration: user.deductions?.last1098Generation
         });
 
     } catch (error) {
@@ -674,13 +678,12 @@ router.get('/1098-data', auth, async (req, res) => {
     }
 });
 
-// Update 1098 data (PUT /api/dashboard/1098-data) - NEW
+// Update 1098 data (PUT /api/dashboard/1098-data)
 router.put('/1098-data', auth, [
     body('mortgageInterestReceived').optional().isNumeric(),
     body('pointsPaid').optional().isNumeric(),
     body('mortgageInsurancePremiums').optional().isNumeric(),
     body('lenderName').optional().trim(),
-    // Add more validation as needed
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -737,7 +740,7 @@ router.put('/1098-data', auth, [
     }
 });
 
-// Download 1098 PDF (GET /api/dashboard/download-1098) - NEW
+// Download 1098 PDF (GET /api/dashboard/download-1098)
 router.get('/download-1098', auth, async (req, res) => {
     try {
         const user = await User.findByPk(req.user.userId);
@@ -767,7 +770,6 @@ router.get('/download-1098', auth, async (req, res) => {
         doc.pipe(res);
 
         // PDF Content
-        // Header
         doc.fontSize(20).text('Form 1098', { align: 'center' });
         doc.fontSize(16).text('Mortgage Interest Statement', { align: 'center' });
         doc.fontSize(12).text(`Tax Year ${form1098.formYear}`, { align: 'center' });
@@ -802,11 +804,11 @@ router.get('/download-1098', auth, async (req, res) => {
         // Form Data
         doc.fontSize(14).text('MORTGAGE INTEREST INFORMATION', { underline: true });
         doc.fontSize(11);
-        doc.text(`Box 1 - Mortgage Interest Received: $${form1098.mortgageInterestReceived.toFixed(2)}`);
-        doc.text(`Box 2 - Points Paid: $${form1098.pointsPaid.toFixed(2)}`);
-        doc.text(`Box 3 - Refund of Overpaid Interest: $${form1098.refundOfOverpaidInterest.toFixed(2)}`);
-        doc.text(`Box 4 - Mortgage Insurance Premiums: $${form1098.mortgageInsurancePremiums.toFixed(2)}`);
-        doc.text(`Box 5 - Outstanding Mortgage Principal: $${form1098.outstandingMortgagePrincipal.toFixed(2)}`);
+        doc.text(`Box 1 - Mortgage Interest Received: ${form1098.mortgageInterestReceived.toFixed(2)}`);
+        doc.text(`Box 2 - Points Paid: ${form1098.pointsPaid.toFixed(2)}`);
+        doc.text(`Box 3 - Refund of Overpaid Interest: ${form1098.refundOfOverpaidInterest.toFixed(2)}`);
+        doc.text(`Box 4 - Mortgage Insurance Premiums: ${form1098.mortgageInsurancePremiums.toFixed(2)}`);
+        doc.text(`Box 5 - Outstanding Mortgage Principal: ${form1098.outstandingMortgagePrincipal.toFixed(2)}`);
         doc.moveDown();
 
         // Footer
@@ -814,11 +816,11 @@ router.get('/download-1098', auth, async (req, res) => {
         doc.text(`Generated on: ${new Date(form1098.generatedDate).toLocaleDateString()}`, { align: 'right' });
         doc.text('This is a computer-generated document.', { align: 'center' });
 
-        // Calculation details (if needed for debugging)
+        // Calculation details
         if (form1098.calculationBasis) {
             doc.moveDown();
             doc.fontSize(8).text('Calculation Details:', { underline: true });
-            doc.text(`Based on W-2 Income: $${form1098.calculationBasis.basedOnW2Income.toFixed(2)}`);
+            doc.text(`Based on W-2 Income: ${form1098.calculationBasis.basedOnW2Income.toFixed(2)}`);
             doc.text(`Estimation Method: ${form1098.calculationBasis.estimationMethod}`);
             doc.text(`Interest Rate Used: ${(form1098.calculationBasis.interestRate * 100).toFixed(2)}%`);
         }
