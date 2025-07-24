@@ -1,5 +1,11 @@
 const { Sequelize } = require('sequelize');
 
+// Validate required environment variables
+if (!process.env.DATABASE_URL) {
+    console.error('❌ DATABASE_URL environment variable is required');
+    process.exit(1);
+}
+
 // Initialize Sequelize with PostgreSQL
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
     dialect: 'postgres',
@@ -13,48 +19,70 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
     pool: {
         max: 5,
         min: 0,
-        acquire: 30000,
+        acquire: 60000, // Increased timeout
         idle: 10000
+    },
+    retry: {
+        max: 5
     }
 });
 
 // Test the connection and setup models
 const connectDB = async () => {
-    try {
-        await sequelize.authenticate();
-        console.log('PostgreSQL connected successfully!');
+    let retries = 5;
+    
+    while (retries > 0) {
+        try {
+            console.log(`🔄 Attempting to connect to PostgreSQL (${6 - retries}/5)...`);
+            
+            await sequelize.authenticate();
+            console.log('✅ PostgreSQL connected successfully!');
+            
+            // Import models
+            const User = require('./models/User');
+            const Dependent = require('./models/Dependent');
+            
+            console.log('📦 Models imported');
+            
+            // Set up associations AFTER models are defined
+            User.hasMany(Dependent, { 
+                foreignKey: 'userId', 
+                as: 'dependents',
+                onDelete: 'CASCADE'
+            });
+            Dependent.belongsTo(User, { 
+                foreignKey: 'userId', 
+                as: 'user'
+            });
+            
+            console.log('🔗 Model associations set up');
 
-        // Import models
-        const User = require('./models/User');
-        const Dependent = require('./models/Dependent');
-        
-        // Set up associations AFTER models are defined
-        User.hasMany(Dependent, { 
-            foreignKey: 'userId', 
-            as: 'dependents',
-            onDelete: 'CASCADE'
-        });
-        Dependent.belongsTo(User, { 
-            foreignKey: 'userId', 
-            as: 'user'
-        });
-
-        // Sync models in the correct order
-        console.log('Syncing database models...');
-        
-        // Sync User first
-        await User.sync({ alter: true });
-        console.log('User model synced');
-        
-        // Then sync Dependent (which has foreign key to User)
-        await Dependent.sync({ alter: true });
-        console.log('Dependent model synced');
-        
-        console.log('Database synchronized successfully!');
-        
-    } catch (error) {
-        console.error('Unable to connect to PostgreSQL:', error);
-        process.exit(1);
+            // Sync models in the correct order with alter: true for production safety
+            console.log('🔄 Syncing database models...');
+            
+            // First sync User model
+            await User.sync({ alter: process.env.NODE_ENV === 'production' });
+            console.log('✅ User model synced');
+            
+            // Then sync Dependent model (depends on User)
+            await Dependent.sync({ alter: process.env.NODE_ENV === 'production' });
+            console.log('✅ Dependent model synced');
+            
+            console.log('🎉 Database synchronized successfully!');
+            return;
+            
+        } catch (error) {
+            console.error(`❌ Database connection attempt ${6 - retries} failed:`, error.message);
+            retries--;
+            
+            if (retries === 0) {
+                console.error('💥 All database connection attempts failed');
+                throw error;
+            }
+            
+            console.log(`⏳ Retrying in 5 seconds... (${retries} attempts remaining)`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+        }
     }
 };
 
